@@ -34,6 +34,7 @@ function CustomerLedgerFlow() {
     useState(false);
   const [supplierSameAsShipping, setSupplierSameAsShipping] = useState(false);
   const [fetchLedger, setFetchLedger] = useState(false);
+  const [globalLedger, setGlobalLedger] = useState(false);
   const navigate = useNavigate();
 
   const userId = Cookies.get("KhataDiary_user_id");
@@ -74,8 +75,27 @@ function CustomerLedgerFlow() {
     }
   };
 
+  const fetchGlobalData = async () => {
+    try {
+      const response = await axios.get(
+        `https://khatadiary.synoventum.site/v1/transactions/report/global?user_id=${userId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      setGlobalLedger(response.data);
+      console.log("Global Data:", response.data);
+    } catch (error) {
+      console.error("Error fetching global data:", error);
+    }
+  };
+
   useEffect(() => {
     fetchLedgerData();
+    fetchGlobalData();
   }, []);
 
   const handleChange = (e, section = null) => {
@@ -142,7 +162,6 @@ function CustomerLedgerFlow() {
       })
       .then((response) => {
         console.log("Ledger created:", response.data);
-        navigate("/AddTransaction");
       })
       .catch((error) => {
         console.error("Error creating ledger:", error);
@@ -169,13 +188,13 @@ function CustomerLedgerFlow() {
     setSupplierView("supplier-ledger-form");
   };
 
-  const handleLedgeUserClick = (user) => {
-    setSelectedUser(user);
+  const handleLedgeUserClick = (legderId) => {
+    setSelectedUser(legderId);
     setActiveView("ledge-user-main");
   };
 
-  const handleSupplierLedgeUserClick = (supplier) => {
-    setSelectedUser(supplier);
+  const handleSupplierLedgeUserClick = (legderId) => {
+    setSelectedUser(legderId);
     setSupplierView("supplier-ledger-main");
   };
 
@@ -256,17 +275,17 @@ function CustomerLedgerFlow() {
                           <h4>
                             You will get <ArrowDown />
                           </h4>
-                          <p>₹86,860</p>
+                          <p>₹{globalLedger?.customer?.totalGot?.toLocaleString()}</p>
                         </div>
                         <div className="will-get will-give ">
                           <h4>
                             You will give <ArrowUp />
                           </h4>
-                          <p>₹5,31,286</p>
+                          <p>₹{globalLedger?.customer?.totalGive?.toLocaleString()}</p>
                         </div>
                         <div className="will-get net-summary ">
                           <h4>Net Summary</h4>
-                          <p>₹1,86,860</p>
+                          <p>₹{Math.abs(globalLedger?.customer?.netAmount || 0).toLocaleString()}</p>
                         </div>
                       </div>
                       <div className="cashbook-reports">
@@ -303,17 +322,17 @@ function CustomerLedgerFlow() {
                           <h4>
                             You will get <ArrowDown />
                           </h4>
-                          <p>₹86,860</p>
+                          <p>₹{globalLedger?.supplier?.totalGot?.toLocaleString()}</p>
                         </div>
                         <div className="will-get will-give ">
                           <h4>
                             You will give <ArrowUp />
                           </h4>
-                          <p>₹5,31,286</p>
+                          <p>₹{globalLedger?.supplier?.totalGive?.toLocaleString()}</p>
                         </div>
                         <div className="will-get net-summary ">
                           <h4>Net Summary</h4>
-                          <p>₹1,86,860</p>
+                          <p>₹{Math.abs(globalLedger?.supplier?.netAmount || 0).toLocaleString()}</p>
                         </div>
                       </div>
                       <div className="cashbook-reports">
@@ -583,39 +602,47 @@ function CustomerLedgerFlow() {
                     <div>
                       {fetchLedger?.results
                         ?.filter((item) => item.type === "customer")
-                        .map((item) => (
-                          <button
-                            key={item.id}
-                            className="ledge-user"
-                            onClick={() =>
-                              handleLedgeUserClick({
-                                name: item.name,
-                                time: "Just now",
-                                amount: item.balance || "0", // replace with actual amount field
-                                direction: "up", // since it's a customer
-                              })
-                            }
-                          >
-                            <div className="ledge-user-flex">
-                              {/* <div className="ledge-user-details">
-                                <img src={UserLedger} className="img-fluid" alt="" />
-                              </div> */}
-                              <div className="ledge-user-details profile-letter">
-                                {item.name?.charAt(0).toUpperCase()}
+                        .map((item) => {
+                          const isNegative = Number(item.balance) < 0;
+                          const formattedBalance = Math.abs(Number(item.balance)).toLocaleString();
+
+                          return (
+                            <button
+                              key={item.id}
+                              className="ledge-user"
+                              onClick={() =>
+                                handleLedgeUserClick({
+                                  ledgerId: item.id,
+                                })
+                              }
+                            >
+                              <div className="ledge-user-flex">
+                                <div className="ledge-user-details profile-letter">
+                                  {item.name?.charAt(0).toUpperCase()}
+                                </div>
+                                <div className="ledge-user-details">
+                                  <h3>{item.name}</h3>
+                                  <p>Just now</p>
+                                </div>
                               </div>
                               <div className="ledge-user-details">
-                                <h3>{item.name}</h3>
-                                <p>Just now</p>
+                                <h5
+                                  style={{
+                                    color: isNegative ? "red" : "green",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "4px",
+                                  }}
+                                >
+                                  {isNegative ? <ArrowUp /> : <ArrowDown />}
+                                  ₹ {formattedBalance}
+                                </h5>
                               </div>
-                            </div>
-                            <div className="ledge-user-details">
-                              <h5>
-                                <ArrowUp /> ₹ {item.balance || "0"}
-                              </h5>
-                            </div>
-                          </button>
-                        ))}
+                            </button>
+                          );
+                        })}
                     </div>
+
                   </>
                 </div>
                 <div
@@ -863,38 +890,45 @@ function CustomerLedgerFlow() {
                     <div>
                       {fetchLedger?.results
                         ?.filter((item) => item.type === "supplier")
-                        .map((item) => (
-                          <button
-                            key={item.id}
-                            className="ledge-user"
-                            onClick={() =>
-                              handleLedgeUserClick({
-                                name: item.name,
-                                time: "Just now", 
-                                amount: item.amount || "0", 
-                                direction: "up", 
-                              })
-                            }
-                          >
-                            <div className="ledge-user-flex">
-                              {/* <div className="ledge-user-details">
-                                <img src={UserLedger} className="img-fluid" alt="" />
-                              </div> */}
-                              <div className="ledge-user-details profile-letter">
-                                {item.name?.charAt(0).toUpperCase()}
+                        .map((item) => {
+                          const isNegative = Number(item.balance) < 0;
+                          const formattedBalance = Math.abs(Number(item.balance)).toLocaleString();
+
+                          return (
+                            <button
+                              key={item.id}
+                              className="ledge-user"
+                              onClick={() =>
+                                handleSupplierLedgeUserClick({
+                                  ledgerId: item.id,
+                                })
+                              }
+                            >
+                              <div className="ledge-user-flex">
+                                <div className="ledge-user-details profile-letter">
+                                  {item.name?.charAt(0).toUpperCase()}
+                                </div>
+                                <div className="ledge-user-details">
+                                  <h3>{item.name}</h3>
+                                  <p>Just now</p>
+                                </div>
                               </div>
                               <div className="ledge-user-details">
-                                <h3>{item.name}</h3>
-                                <p>Just now</p>
+                                <h5
+                                  style={{
+                                    color: isNegative ? "red" : "green",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "4px",
+                                  }}
+                                >
+                                  {isNegative ? <ArrowUp /> : <ArrowDown />}
+                                  ₹ {formattedBalance}
+                                </h5>
                               </div>
-                            </div>
-                            <div className="ledge-user-details">
-                              <h5>
-                                <ArrowUp /> ₹ {item.balance || "0"}
-                              </h5>
-                            </div>
-                          </button>
-                        ))}
+                            </button>
+                          );
+                        })}
                     </div>
                   </>
                 </div>
@@ -1170,7 +1204,7 @@ function CustomerLedgerFlow() {
                   >
                     {selectedUser && (
                       <>
-                        <AddTransaction />
+                        <AddTransaction ledgerId={selectedUser.ledgerId} />
                       </>
                     )}
                   </div>

@@ -6560,6 +6560,16 @@ textarea {
   padding: 10px;
 }
 
+.add-transaction-give p {
+  color: #d80000;
+  font-size: 15px;
+  font-weight: 400;
+  margin-bottom: 0;
+  border-radius: 12.743px;
+  background: #f2f7ff;
+  padding: 10px;
+}
+
 .add-transaction-got span {
   font-weight: 700;
 }
