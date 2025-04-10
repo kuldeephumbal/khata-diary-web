@@ -7285,6 +7285,7 @@ textarea {
   box-shadow: 0px 2.528px 12.641px 0px rgba(228, 235, 239, 0.6);
   padding: 10px;
   margin-bottom: 10px;
+  cursor: pointer;
 }
 
 .btn-trash-expense svg {
@@ -7384,4 +7385,31 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.add-transaction-two input {
+  color: #d80000 !important;
+  font-size: 23.647px;
+  font-weight: 700;
+  line-height: normal;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0px 2.365px 11.823px 0px rgba(228, 235, 239, 0.6);
+  padding: 10px;
+  width: 100%;
+  border: none;
+  margin-bottom: 15px;
+}
+
+.add-transaction-two input::placeholder {
+  color: #d80000;
+  opacity: 1;
+}
+
+.add-transaction-two input:-ms-input-placeholder {
+  color: #d80000;
+}
+
+.add-transaction-two input::-ms-input-placeholder {
+  color: #d80000;
 }

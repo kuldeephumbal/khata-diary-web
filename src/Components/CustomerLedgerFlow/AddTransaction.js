@@ -61,7 +61,7 @@ function AddTransaction({ ledgerId }) {
 
   const handleYouGiveClick = () => {
     setShowAddTransaction(false);
-    setTransactionStep(10);
+    setTransactionStep(2);
   };
 
   // Add function to toggle bill field visibility
@@ -97,64 +97,73 @@ function AddTransaction({ ledgerId }) {
   const submitTransaction = () => {
     setIsSubmitting(true);
 
-    // Prepare the transaction data
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      alert("Please enter a valid amount greater than 0.");
+      setIsSubmitting(false);
+      return;
+    }
+
     const transactionData = {
       ledger_id: ledgerId,
-      transaction_type: transactionStep === 1 ? "give" : "got",
-      amount: parseFloat(amount),
-      details: details,
-      bill_number: billNumber,
-      reminder_date: reminderDate,
-      message_type: messageType || "email", // Default to email if not selected
-      due_date: dueDate
+      transaction_type: transactionStep === 1 ? "got" : "give",
+      amount: parsedAmount,
+      details: details || "",
+      bill_number: billNumber || "",
+      reminder_date: reminderDate || null,
+      message_type: messageType || "email",
+      due_date: dueDate || null,
     };
 
-    // Make the API call
-    axios.post(
-      'https://khatadiary.synoventum.site/v1/transactions',
-      transactionData,
-      {
+    console.log("Submitting transaction data:", transactionData);
+
+    axios
+      .post("https://khatadiary.synoventum.site/v1/transactions", transactionData, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
-      }
-    )
-      .then(response => {
-        console.log("Transaction created:", response.data);
-        // Fetch updated transaction data
-        fetchTransactionData();
-        // Move to the transaction saved screen
-        const amount = parseFloat(transactionData.amount).toLocaleString();
-        setFetchAmount(amount)
-        setTransactionStep(3,);
       })
-      .catch(error => {
-        console.error("Error creating transaction:", error);
-        alert("Failed to create transaction. Please try again.");
+      .then((response) => {
+        console.log("Transaction created:", response.data);
+        fetchTransactionData();
+        const formattedAmount = parsedAmount.toLocaleString();
+        setFetchAmount(formattedAmount);
+        setTransactionStep(3);
+      })
+      .catch((error) => {
+        console.error("Error creating transaction:", error.response?.data || error.message);
+        alert(
+          `Failed to create transaction: ${error.response?.data?.message || "Server error. Please try again."
+          }`
+        );
       })
       .finally(() => {
         setIsSubmitting(false);
       });
   };
+  const resetForm = () => {
+    setAmount("");
+    setDetails("");
+    setBillNumber("");
+    setDueDate("");
+    setReminderDate("");
+    setMessageType("");
+    setShowBillField(false);
+  };
 
-  // Update your handleSaveClick to call submitTransaction
   const handleSaveClick = () => {
-    if (transactionStep === 2) {
+    if (transactionStep === 1 || transactionStep === 2) {
+      // Move to details step
       submitTransaction();
-    } else {
-      setTransactionStep((prevStep) => prevStep + 1);
+    } else if (transactionStep === 3) {
+      // After confirmation, reset and return to initial view
+      resetForm();
+      setShowAddTransaction(true);
+      setTransactionStep(0);
+      fetchTransactionData();
     }
   };
-
-  const handleSaveClick2 = () => {
-    if (transactionStep === 11) {
-      submitTransaction();
-    } else {
-      setTransactionStep((prevStep) => prevStep + 1);
-    }
-  };
-
 
   return (
     <>
@@ -298,7 +307,7 @@ function AddTransaction({ ledgerId }) {
                     </div>
                   </div>
 
-                  <div>
+                  <div className="transaction-list">
                     {transactionData.transactions.map((transaction, index) => {
                       const transactionDate = new Date(transaction.created_at);
                       const formattedDate = `${transactionDate.getDate()} ${transactionDate.toLocaleString('default', { month: 'short' })} ${transactionDate.getFullYear()}`;
@@ -325,9 +334,7 @@ function AddTransaction({ ledgerId }) {
                           </div>
                           <div className="col-5">
                             <div className="entries-bal entries-bal-one entries-bal-padding">
-                              <h3>
-                                Bal: <span>₹ {runningBalance.toLocaleString()}</span>
-                              </h3>
+                              <h3>Bal: ₹{Math.abs(transactionData.balance).toLocaleString()}</h3>
                               {transaction.details && <p>{transaction.details}</p>}
                             </div>
                           </div>
@@ -360,94 +367,6 @@ function AddTransaction({ ledgerId }) {
       ) : (
         <>
           {transactionStep === 1 && (
-            <div id="add-transaction">
-              <div className="add-transaction">
-                <h3>Add Transaction</h3>
-              </div>
-              <div className="add-transaction" style={{ position: "relative" }}>
-                <span
-                  style={{
-                    position: "absolute",
-                    left: "10px",
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    color: "#0F814D",
-                    pointerEvents: "none",
-                  }}
-                >
-                  ₹
-                </span>
-                <input
-                  type="text"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  placeholder="Enter Amount"
-                  style={{ paddingLeft: "25px" }}
-                />
-              </div>
-              <div className="add-transaction-got">
-                <p>
-                  You Got <span>₹{amount || 0}</span> From {transactionData?.name || "customer"}
-                </p>
-              </div>
-
-              <div>
-                <div className="sms-radio-got">
-                  <h4>You got Rs {amount || 0} from {transactionData?.name || "customer"}</h4>
-                </div>
-                <button
-                  className="btn-save mt-0"
-                  onClick={handleSaveClick}
-                  disabled={!amount}
-                >
-                  save
-                </button>
-              </div>
-            </div>
-          )}
-          {transactionStep === 10 && (
-            <div id="add-transaction">
-              <div className="add-transaction">
-                <h3>Add Transaction</h3>
-              </div>
-              <div className="add-transaction" style={{ position: "relative" }}>
-                <span
-                  style={{
-                    position: "absolute",
-                    left: "10px",
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    color: "#d80000",
-                    pointerEvents: "none",
-                  }}
-                >
-                  ₹
-                </span>
-                <input
-                  type="text"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  placeholder="Enter Amount"
-                  style={{ paddingLeft: "25px" }}
-                />
-              </div>
-              <div className="add-transaction-give">
-                <p>
-                  You Give <span>₹{amount || 0}</span> From {transactionData?.name || "customer"}
-                </p>
-              </div>
-
-              <div>
-                <div className="sms-radio-got">
-                  <h4>You give Rs {amount || 0} from {transactionData?.name || "customer"}</h4>
-                </div>
-                <button className="btn-save mt-0" onClick={handleSaveClick2}>
-                  save
-                </button>
-              </div>
-            </div>
-          )}
-          {transactionStep === 2 && (
             <div id="new-transaction1">
               <div>
                 <div className="add-transaction">
@@ -725,20 +644,30 @@ function AddTransaction({ ledgerId }) {
               </div>
             </div>
           )}
-          {transactionStep === 11 && (
+          {transactionStep === 2 && (
             <div id="new-transaction1">
               <div>
                 <div className="add-transaction">
                   <h3>Add Transaction</h3>
                 </div>
-                <div className="add-transaction-one">
-                  <input
-                    type="text"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    placeholder="₹ 1000"
-                  />
-                </div>
+                {transactionStep === 1
+                  ? <div className="add-transaction-one">
+                    <input
+                      type="text"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      placeholder="₹ 1000"
+                    />
+                  </div>
+                  : <div className="add-transaction-two">
+                    <input
+                      type="text"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      placeholder="₹ 1000"
+                    />
+                  </div>}
+
                 <div className="add-transaction-details">
                   <input
                     type="text"
@@ -1019,13 +948,21 @@ function AddTransaction({ ledgerId }) {
               </div>
               <div>
                 <div className="another-transaction">
-                  <h6>Add another transaction to Adam. S</h6>
+                  <h6>Add another transaction to {transactionData.name}</h6>
                 </div>
-                <div>
-                  <Link to={"#"} className="btn stock-in me-2">
+                <div className="settled-up-transaction">
+                  <Link
+                    to={"#"}
+                    className="btn stock-in me-2"
+                    onClick={handleYouGiveClick}
+                  >
                     You Gave ₹
                   </Link>
-                  <Link to={"#"} className="btn stock-in stock-green">
+                  <Link
+                    to={"#"}
+                    className="btn stock-in stock-green"
+                    onClick={handleYouGotClick}
+                  >
                     You Got ₹
                   </Link>
                 </div>

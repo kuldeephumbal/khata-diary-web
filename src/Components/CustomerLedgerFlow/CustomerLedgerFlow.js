@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import KhataDiaryImg from "../../images/KhataDiaryImg.svg";
 import UserLedger from "../../images/UserLedger.svg";
@@ -19,6 +19,8 @@ import SupplierTransaction from "./SupplierTransaction";
 import axios from "axios";
 import Cookies from "js-cookie";
 import { useNavigate } from "react-router-dom";
+import { toast } from "react-hot-toast";
+
 
 function CustomerLedgerFlow() {
   const [activeTab, setActiveTab] = useState("customer");
@@ -34,11 +36,19 @@ function CustomerLedgerFlow() {
     useState(false);
   const [supplierSameAsShipping, setSupplierSameAsShipping] = useState(false);
   const [fetchLedger, setFetchLedger] = useState(false);
-  const [globalLedger, setGlobalLedger] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+  const [ledgerData, setLedgerData] = useState([]);
+  const [globalLedger, setGlobalLedger] = useState(null);
   const navigate = useNavigate();
-
+  const LIMIT = 10;
   const userId = Cookies.get("KhataDiary_user_id");
   const accessToken = Cookies.get("KhataDiary_access_token");
+  const [selectedSortBy, setSelectedSortBy] = useState("recent");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [isFilterApplied, setIsFilterApplied] = useState(false);
+  const [activeType, setActiveType] = useState("customer");
 
   const [formData, setFormData] = useState({
     name: "",
@@ -58,23 +68,62 @@ function CustomerLedgerFlow() {
     shipping_state: "",
   });
 
-  const fetchLedgerData = async () => {
+  const fetchLedgerData = useCallback(async (pageNum, applyFilter = false) => {
+    if (!hasMore && pageNum !== 1 && !applyFilter) return;
+
+    setIsLoading(true);
     try {
+      // Convert UI filter names to API parameter format
+      let apiTransactionFilter = "All";
+      if (selectedFilter !== "All") {
+        apiTransactionFilter = selectedFilter.toLowerCase();
+      }
+
+      // Create the query parameters
+      const params = new URLSearchParams({
+        limit: LIMIT,
+        page: pageNum,
+        type: activeTab,
+      });
+
+      // Add filter parameters when they're selected
+      if (apiTransactionFilter !== "All") {
+        params.append("transactionFilter", apiTransactionFilter);
+      }
+
+      // Add sort parameter
+      if (selectedSortBy) {
+        params.append("sortBy", selectedSortBy);
+      }
+
+      // Add search term if present
+      if (searchTerm) {
+        params.append("name", searchTerm);
+      }
+
       const response = await axios.get(
-        `https://khatadiary.synoventum.site/v1/ledger/user/${userId}`,
+        `https://khatadiary.synoventum.site/v1/ledger/user/${userId}?${params.toString()}`,
         {
           headers: {
             Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json",
+            "accept": "application/json",
           },
         }
       );
-      setFetchLedger(response.data);
-    } catch (error) {
-      console.error("Error fetching customer data:", error);
-    }
-  };
 
+      const newData = response.data.results || [];
+      setLedgerData(prev => pageNum === 1 ? newData : [...prev, ...newData]);
+      setHasMore(newData.length === LIMIT && response.data.totalPages > pageNum);
+      setPage(pageNum);
+
+    } catch (error) {
+      console.error("Error fetching ledger data:", error);
+      toast.error("Failed to load ledger data");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [userId, accessToken, hasMore, selectedFilter, selectedSortBy, searchTerm, activeTab]);
   const fetchGlobalData = async () => {
     try {
       const response = await axios.get(
@@ -93,23 +142,41 @@ function CustomerLedgerFlow() {
     }
   };
 
+  // Update useEffect to reset filters when tab changes
   useEffect(() => {
-    fetchLedgerData();
-    fetchGlobalData();
-  }, []);
+    setActiveType(activeTab);
+    setSelectedFilter("All");
+    setSelectedSortBy("recent");
+    setSearchTerm("");
+    setPage(1);
+    setHasMore(true);
+    fetchLedgerData(1, true);
+  }, [activeTab]);
 
-  const handleChange = (e, section = null) => {
-    const { name, value } = e.target;
-    if (section) {
-      setFormData(prev => ({
-        ...prev,
-        [section]: { ...prev[section], [name]: value }
-      }));
-    } else {
-      setFormData(prev => ({ ...prev, [name]: value }));
+  // Add a function to handle search input changes
+  const handleSearchChange = (e) => {
+    setSearchTerm(e.target.value);
+  };
+
+  // Add a function to handle search submission (e.g., on Enter key press)
+  const handleSearchSubmit = (e) => {
+    if (e.key === 'Enter') {
+      setPage(1);
+      setHasMore(true);
+      fetchLedgerData(1, true);
     }
   };
 
+  // Add a function to handle applying filters
+  const handleApplyFilters = () => {
+    setIsFilterApplied(true);
+    // Reset to page 1 when applying new filters
+    setPage(1);
+    setHasMore(true);
+    fetchLedgerData(1, true);
+    // Close the modal
+    document.querySelector('.btn-close[data-bs-dismiss="modal"]').click();
+  };
   const handleSameAsShippingChange = (e) => {
     const checked = e.target.checked;
     setSameAsShipping(checked);
@@ -125,13 +192,58 @@ function CustomerLedgerFlow() {
       }));
     }
   };
+  const handleScroll = useCallback(() => {
+    const scrollElement = document.querySelector('.customer-list') || document.querySelector('.supplier-list');
+    if (!scrollElement) return;
 
+    const { scrollTop, scrollHeight, clientHeight } = scrollElement;
+    if (scrollTop + clientHeight >= scrollHeight - 5 && hasMore && !isLoading) {
+      fetchLedgerData(page + 1);
+    }
+  }, [page, hasMore, isLoading, fetchLedgerData]);
+
+  useEffect(() => {
+    fetchLedgerData(1); // Initial fetch
+    fetchGlobalData();
+  }, []);
+  useEffect(() => {
+    const scrollElement = document.querySelector('.customer-list') || document.querySelector('.supplier-list');
+    if (scrollElement) {
+      scrollElement.addEventListener('scroll', handleScroll);
+      return () => scrollElement.removeEventListener('scroll', handleScroll);
+    }
+  }, [handleScroll]);
+
+
+  const handleChange = (e, section = null) => {
+    const { name, value } = e.target;
+    if (section) {
+      setFormData(prev => ({
+        ...prev,
+        [section]: { ...prev[section], [name]: value }
+      }));
+    } else {
+      setFormData(prev => ({ ...prev, [name]: value }));
+    }
+  };
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+
+    if (tab === "customer") {
+      setActiveView("customer-ledger");
+    } else {
+      setSupplierView("supplier-ledger-form");
+    }
+  };
+  
   const toggleAddressDetails = () => {
     setShowAddressDetails(prev => !prev);
   };
 
-  const handleAddCustmomer = (e, type) => {
+  const handleAddCustmomer = async (e, type) => {
     e.preventDefault();
+
+    const businessID = Cookies.get("KhataDiary_business_id");
 
     const payload = {
       user_id: userId,
@@ -150,40 +262,71 @@ function CustomerLedgerFlow() {
       shipping_pincode: formData.shipping_pincode,
       shipping_city: formData.shipping_city,
       shipping_state: formData.shipping_state,
-      business_id: "BUS123456789",
+      business_id: businessID,
     };
 
-    axios
-      .post("https://khatadiary.synoventum.site/v1/ledger", payload, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-      })
-      .then((response) => {
-        console.log("Ledger created:", response.data);
-      })
-      .catch((error) => {
-        console.error("Error creating ledger:", error);
+    const loadingToast = toast.loading(`Adding ${type}...`, {
+      duration: 3000,
+      position: 'top-right'
+    });
+
+    try {
+      const response = await axios.post(
+        "https://khatadiary.synoventum.site/v1/ledger",
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      // Dismiss loading toast and show success toast
+      toast.dismiss(loadingToast);
+      toast.success(`${type} added successfully!`, {
+        duration: 3000,
+        position: 'top-right'
       });
-  };
 
+      // Reset form after successful addition
+      setFormData({
+        name: "",
+        type: "",
+        mobile: "",
+        email: "",
+        gender: "",
+        billing_flat_building: "",
+        billing_area_locality: "",
+        billing_pincode: "",
+        billing_city: "",
+        billing_state: "",
+        shipping_flat_building: "",
+        shipping_area_locality: "",
+        shipping_pincode: "",
+        shipping_city: "",
+        shipping_state: "",
+      });
 
+      // Refresh ledger data
+      await fetchLedgerData();
 
-  const handleTabChange = (tab) => {
-    setActiveTab(tab);
-
-    if (tab === "customer") {
-      setActiveView("customer-ledger");
-    } else {
-      setSupplierView("supplier-ledger-form");
+    } catch (error) {
+      // Dismiss loading toast and show error toast
+      toast.dismiss(loadingToast);
+      toast.error(`Failed to add ${type}. Please try again.`, {
+        duration: 3000,
+        position: 'top-right'
+      });
+      console.error(`Error creating ${type} ledger:`, error);
     }
   };
+
+
 
   const handleAddCustomerClick = () => {
     setActiveView("customer-ledger");
   };
-
   const handleAddSupplierClick = () => {
     setSupplierView("supplier-ledger-form");
   };
@@ -192,11 +335,25 @@ function CustomerLedgerFlow() {
     setSelectedUser(legderId);
     setActiveView("ledge-user-main");
   };
-
   const handleSupplierLedgeUserClick = (legderId) => {
     setSelectedUser(legderId);
     setSupplierView("supplier-ledger-main");
   };
+
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) return "N/A"; // Fallback if timestamp is missing
+    const date = new Date(timestamp);
+    return date.toLocaleString("en-US", {
+      // day: "2-digit",
+      // month: "short",
+      // year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+  };
+
+
 
   return (
     <>
@@ -374,7 +531,13 @@ function CustomerLedgerFlow() {
                     </div>
                     <div className="expense-added-flex">
                       <div className="expense-added-search">
-                        <input type="text" name="" placeholder="Search" id="" />
+                        <input
+                          type="text"
+                          value={searchTerm}
+                          onChange={handleSearchChange}
+                          onKeyPress={handleSearchSubmit}
+                          placeholder="Search"
+                        />
                         <div className="search-added">
                           <Search />
                         </div>
@@ -416,12 +579,8 @@ function CustomerLedgerFlow() {
                                   <button
                                     className="btn-filter-by"
                                     style={{
-                                      background:
-                                        selectedFilter === "All"
-                                          ? "#007df0"
-                                          : "",
-                                      color:
-                                        selectedFilter === "All" ? "white" : "",
+                                      background: selectedFilter === "All" ? "#007df0" : "",
+                                      color: selectedFilter === "All" ? "white" : "",
                                     }}
                                     onClick={() => setSelectedFilter("All")}
                                   >
@@ -430,106 +589,60 @@ function CustomerLedgerFlow() {
                                   <button
                                     className="btn-filter-by"
                                     style={{
-                                      background:
-                                        selectedFilter === "You will get"
-                                          ? "#007df0"
-                                          : "",
-                                      color:
-                                        selectedFilter === "You will get"
-                                          ? "white"
-                                          : "",
+                                      background: selectedFilter === "you will get" ? "#007df0" : "",
+                                      color: selectedFilter === "you will get" ? "white" : "",
                                     }}
-                                    onClick={() =>
-                                      setSelectedFilter("You will get")
-                                    }
+                                    onClick={() => setSelectedFilter("you will get")}
                                   >
                                     You will get
                                   </button>
                                   <button
                                     className="btn-filter-by"
                                     style={{
-                                      background:
-                                        selectedFilter === "You will give"
-                                          ? "#007df0"
-                                          : "",
-                                      color:
-                                        selectedFilter === "You will give"
-                                          ? "white"
-                                          : "",
+                                      background: selectedFilter === "you will give" ? "#007df0" : "",
+                                      color: selectedFilter === "you will give" ? "white" : "",
                                     }}
-                                    onClick={() =>
-                                      setSelectedFilter("You will give")
-                                    }
+                                    onClick={() => setSelectedFilter("you will give")}
                                   >
                                     You will give
                                   </button>
                                   <button
                                     className="btn-filter-by"
                                     style={{
-                                      background:
-                                        selectedFilter === "Settled"
-                                          ? "#007df0"
-                                          : "",
-                                      color:
-                                        selectedFilter === "Settled"
-                                          ? "white"
-                                          : "",
+                                      background: selectedFilter === "settled" ? "#007df0" : "",
+                                      color: selectedFilter === "settled" ? "white" : "",
                                     }}
-                                    onClick={() => setSelectedFilter("Settled")}
+                                    onClick={() => setSelectedFilter("settled")}
                                   >
                                     Settled
                                   </button>
                                   <button
                                     className="btn-filter-by"
                                     style={{
-                                      background:
-                                        selectedFilter === "Due today"
-                                          ? "#007df0"
-                                          : "",
-                                      color:
-                                        selectedFilter === "Due today"
-                                          ? "white"
-                                          : "",
+                                      background: selectedFilter === "due today" ? "#007df0" : "",
+                                      color: selectedFilter === "due today" ? "white" : "",
                                     }}
-                                    onClick={() =>
-                                      setSelectedFilter("Due today")
-                                    }
+                                    onClick={() => setSelectedFilter("due today")}
                                   >
                                     Due today
                                   </button>
                                   <button
                                     className="btn-filter-by"
                                     style={{
-                                      background:
-                                        selectedFilter === "Upcoming"
-                                          ? "#007df0"
-                                          : "",
-                                      color:
-                                        selectedFilter === "Upcoming"
-                                          ? "white"
-                                          : "",
+                                      background: selectedFilter === "upcoming" ? "#007df0" : "",
+                                      color: selectedFilter === "upcoming" ? "white" : "",
                                     }}
-                                    onClick={() =>
-                                      setSelectedFilter("Upcoming")
-                                    }
+                                    onClick={() => setSelectedFilter("upcoming")}
                                   >
                                     Upcoming
                                   </button>
                                   <button
                                     className="btn-filter-by"
                                     style={{
-                                      background:
-                                        selectedFilter === "No due date"
-                                          ? "#007df0"
-                                          : "",
-                                      color:
-                                        selectedFilter === "No due date"
-                                          ? "white"
-                                          : "",
+                                      background: selectedFilter === "no due date" ? "#007df0" : "",
+                                      color: selectedFilter === "no due date" ? "white" : "",
                                     }}
-                                    onClick={() =>
-                                      setSelectedFilter("No due date")
-                                    }
+                                    onClick={() => setSelectedFilter("no due date")}
                                   >
                                     No due date
                                   </button>
@@ -537,59 +650,81 @@ function CustomerLedgerFlow() {
                                 <div className="filter-by mt-4">
                                   <h3>Sort By </h3>
                                 </div>
-                                <div className="filter-sort">
-                                  <label for="recent">Recent</label>
+                                <div
+                                  className="filter-sort"
+                                  onClick={() => setSelectedSortBy("recent")}
+                                >
+                                  <label htmlFor="recent">Recent</label>
                                   <input
                                     type="radio"
                                     id="recent"
-                                    name="fav_language"
-                                    value="Recent"
+                                    name="sort_option"
+                                    value="recent"
+                                    checked={selectedSortBy === "recent"}
+                                    onChange={() => setSelectedSortBy("recent")}
                                   />
                                 </div>
-                                <div className="filter-sort">
-                                  <label for="recent1">
-                                    Highest to lowest amount
-                                  </label>
+                                <div
+                                  className="filter-sort"
+                                  onClick={() => setSelectedSortBy("highest")}
+                                >
+                                  <label htmlFor="highest">Highest to lowest amount</label>
                                   <input
                                     type="radio"
-                                    id="recent1"
-                                    name="fav_language"
-                                    value="Recent1"
+                                    id="highest"
+                                    name="sort_option"
+                                    value="highest"
+                                    checked={selectedSortBy === "highest"}
+                                    onChange={() => setSelectedSortBy("highest")}
                                   />
                                 </div>
-                                <div className="filter-sort">
-                                  <label for="recent2">
-                                    Lowest to highest amount
-                                  </label>
+                                <div
+                                  className="filter-sort"
+                                  onClick={() => setSelectedSortBy("lowest")}
+                                >
+                                  <label htmlFor="lowest">Lowest to highest amount</label>
                                   <input
                                     type="radio"
-                                    id="recent2"
-                                    name="fav_language"
-                                    value="Recent2"
+                                    id="lowest"
+                                    name="sort_option"
+                                    value="lowest"
+                                    checked={selectedSortBy === "lowest"}
+                                    onChange={() => setSelectedSortBy("lowest")}
                                   />
                                 </div>
-                                <div className="filter-sort">
-                                  <label for="recent3">
-                                    Oldest to recent amount
-                                  </label>
+                                <div
+                                  className="filter-sort"
+                                  onClick={() => setSelectedSortBy("oldest")}
+                                >
+                                  <label htmlFor="oldest">Oldest to recent</label>
                                   <input
                                     type="radio"
-                                    id="recent3"
-                                    name="fav_language"
-                                    value="Recent3"
+                                    id="oldest"
+                                    name="sort_option"
+                                    value="oldest"
+                                    checked={selectedSortBy === "oldest"}
+                                    onChange={() => setSelectedSortBy("oldest")}
                                   />
                                 </div>
-                                <div className="filter-sort">
-                                  <label for="recent4">By name A-Z</label>
+                                <div
+                                  className="filter-sort"
+                                  onClick={() => setSelectedSortBy("name")}
+                                >
+                                  <label htmlFor="name">By name A-Z</label>
                                   <input
                                     type="radio"
-                                    id="recent4"
-                                    name="fav_language"
-                                    value="Recent4"
+                                    id="name"
+                                    name="sort_option"
+                                    value="name"
+                                    checked={selectedSortBy === "name"}
+                                    onChange={() => setSelectedSortBy("name")}
                                   />
                                 </div>
                                 <div>
-                                  <button className="btn-save mt-4">
+                                  <button
+                                    className="btn-save mt-4"
+                                    onClick={handleApplyFilters}
+                                  >
                                     View Result
                                   </button>
                                 </div>
@@ -599,22 +734,18 @@ function CustomerLedgerFlow() {
                         </div>
                       </div>
                     </div>
-                    <div>
-                      {fetchLedger?.results
-                        ?.filter((item) => item.type === "customer")
+                    <div className="customer-list" style={{ maxHeight: '600px', overflowY: 'auto' }}>
+                      {ledgerData
+                        .filter((item) => item.type === "customer")
                         .map((item) => {
                           const isNegative = Number(item.balance) < 0;
                           const formattedBalance = Math.abs(Number(item.balance)).toLocaleString();
-
+                          const formattedTime = formatTimestamp(item.createdAt);
                           return (
                             <button
                               key={item.id}
                               className="ledge-user"
-                              onClick={() =>
-                                handleLedgeUserClick({
-                                  ledgerId: item.id,
-                                })
-                              }
+                              onClick={() => handleLedgeUserClick({ ledgerId: item.id })}
                             >
                               <div className="ledge-user-flex">
                                 <div className="ledge-user-details profile-letter">
@@ -622,18 +753,16 @@ function CustomerLedgerFlow() {
                                 </div>
                                 <div className="ledge-user-details">
                                   <h3>{item.name}</h3>
-                                  <p>Just now</p>
+                                  <p>{formattedTime}</p>
                                 </div>
                               </div>
                               <div className="ledge-user-details">
-                                <h5
-                                  style={{
-                                    color: isNegative ? "red" : "green",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: "4px",
-                                  }}
-                                >
+                                <h5 style={{
+                                  color: isNegative ? "red" : "green",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "4px",
+                                }}>
                                   {isNegative ? <ArrowUp /> : <ArrowDown />}
                                   ₹ {formattedBalance}
                                 </h5>
@@ -641,8 +770,9 @@ function CustomerLedgerFlow() {
                             </button>
                           );
                         })}
+                      {isLoading && <div>Loading more...</div>}
+                      {!hasMore && ledgerData.length > 0 && <div>No more customers to load</div>}
                     </div>
-
                   </>
                 </div>
                 <div
@@ -660,7 +790,13 @@ function CustomerLedgerFlow() {
                     </div>
                     <div className="expense-added-flex">
                       <div className="expense-added-search">
-                        <input type="text" name="" placeholder="Search" id="" />
+                        <input
+                          type="text"
+                          value={searchTerm}
+                          onChange={handleSearchChange}
+                          onKeyPress={handleSearchSubmit}
+                          placeholder="Search"
+                        />
                         <div className="search-added">
                           <Search />
                         </div>
@@ -702,12 +838,8 @@ function CustomerLedgerFlow() {
                                   <button
                                     className="btn-filter-by"
                                     style={{
-                                      background:
-                                        selectedFilter === "All"
-                                          ? "#007df0"
-                                          : "",
-                                      color:
-                                        selectedFilter === "All" ? "white" : "",
+                                      background: selectedFilter === "All" ? "#007df0" : "",
+                                      color: selectedFilter === "All" ? "white" : "",
                                     }}
                                     onClick={() => setSelectedFilter("All")}
                                   >
@@ -716,106 +848,60 @@ function CustomerLedgerFlow() {
                                   <button
                                     className="btn-filter-by"
                                     style={{
-                                      background:
-                                        selectedFilter === "You will get"
-                                          ? "#007df0"
-                                          : "",
-                                      color:
-                                        selectedFilter === "You will get"
-                                          ? "white"
-                                          : "",
+                                      background: selectedFilter === "you will get" ? "#007df0" : "",
+                                      color: selectedFilter === "you will get" ? "white" : "",
                                     }}
-                                    onClick={() =>
-                                      setSelectedFilter("You will get")
-                                    }
+                                    onClick={() => setSelectedFilter("you will get")}
                                   >
                                     You will get
                                   </button>
                                   <button
                                     className="btn-filter-by"
                                     style={{
-                                      background:
-                                        selectedFilter === "You will give"
-                                          ? "#007df0"
-                                          : "",
-                                      color:
-                                        selectedFilter === "You will give"
-                                          ? "white"
-                                          : "",
+                                      background: selectedFilter === "you will give" ? "#007df0" : "",
+                                      color: selectedFilter === "you will give" ? "white" : "",
                                     }}
-                                    onClick={() =>
-                                      setSelectedFilter("You will give")
-                                    }
+                                    onClick={() => setSelectedFilter("you will give")}
                                   >
                                     You will give
                                   </button>
                                   <button
                                     className="btn-filter-by"
                                     style={{
-                                      background:
-                                        selectedFilter === "Settled"
-                                          ? "#007df0"
-                                          : "",
-                                      color:
-                                        selectedFilter === "Settled"
-                                          ? "white"
-                                          : "",
+                                      background: selectedFilter === "settled" ? "#007df0" : "",
+                                      color: selectedFilter === "settled" ? "white" : "",
                                     }}
-                                    onClick={() => setSelectedFilter("Settled")}
+                                    onClick={() => setSelectedFilter("settled")}
                                   >
                                     Settled
                                   </button>
                                   <button
                                     className="btn-filter-by"
                                     style={{
-                                      background:
-                                        selectedFilter === "Due today"
-                                          ? "#007df0"
-                                          : "",
-                                      color:
-                                        selectedFilter === "Due today"
-                                          ? "white"
-                                          : "",
+                                      background: selectedFilter === "due today" ? "#007df0" : "",
+                                      color: selectedFilter === "due today" ? "white" : "",
                                     }}
-                                    onClick={() =>
-                                      setSelectedFilter("Due today")
-                                    }
+                                    onClick={() => setSelectedFilter("due today")}
                                   >
                                     Due today
                                   </button>
                                   <button
                                     className="btn-filter-by"
                                     style={{
-                                      background:
-                                        selectedFilter === "Upcoming"
-                                          ? "#007df0"
-                                          : "",
-                                      color:
-                                        selectedFilter === "Upcoming"
-                                          ? "white"
-                                          : "",
+                                      background: selectedFilter === "upcoming" ? "#007df0" : "",
+                                      color: selectedFilter === "upcoming" ? "white" : "",
                                     }}
-                                    onClick={() =>
-                                      setSelectedFilter("Upcoming")
-                                    }
+                                    onClick={() => setSelectedFilter("upcoming")}
                                   >
                                     Upcoming
                                   </button>
                                   <button
                                     className="btn-filter-by"
                                     style={{
-                                      background:
-                                        selectedFilter === "No due date"
-                                          ? "#007df0"
-                                          : "",
-                                      color:
-                                        selectedFilter === "No due date"
-                                          ? "white"
-                                          : "",
+                                      background: selectedFilter === "no due date" ? "#007df0" : "",
+                                      color: selectedFilter === "no due date" ? "white" : "",
                                     }}
-                                    onClick={() =>
-                                      setSelectedFilter("No due date")
-                                    }
+                                    onClick={() => setSelectedFilter("no due date")}
                                   >
                                     No due date
                                   </button>
@@ -823,61 +909,82 @@ function CustomerLedgerFlow() {
                                 <div className="filter-by mt-4">
                                   <h3>Sort By </h3>
                                 </div>
-                                <div className="filter-sort">
-                                  <label for="supplier-recent">Recent</label>
+                                <div
+                                  className="filter-sort"
+                                  onClick={() => setSelectedSortBy("recent")}
+                                >
+                                  <label htmlFor="recent">Recent</label>
                                   <input
                                     type="radio"
-                                    id="supplier-recent"
-                                    name="supplier_language"
-                                    value="Recent"
+                                    id="recent"
+                                    name="sort_option"
+                                    value="recent"
+                                    checked={selectedSortBy === "recent"}
+                                    onChange={() => setSelectedSortBy("recent")}
                                   />
                                 </div>
-                                <div className="filter-sort">
-                                  <label for="supplier-recent1">
-                                    Highest to lowest amount
-                                  </label>
+                                <div
+                                  className="filter-sort"
+                                  onClick={() => setSelectedSortBy("highest")}
+                                >
+                                  <label htmlFor="highest">Highest to lowest amount</label>
                                   <input
                                     type="radio"
-                                    id="supplier-recent1"
-                                    name="supplier_language"
-                                    value="Recent1"
+                                    id="highest"
+                                    name="sort_option"
+                                    value="highest"
+                                    checked={selectedSortBy === "highest"}
+                                    onChange={() => setSelectedSortBy("highest")}
                                   />
                                 </div>
-                                <div className="filter-sort">
-                                  <label for="supplier-recent2">
-                                    Lowest to highest amount
-                                  </label>
+                                <div
+                                  className="filter-sort"
+                                  onClick={() => setSelectedSortBy("lowest")}
+                                >
+                                  <label htmlFor="lowest">Lowest to highest amount</label>
                                   <input
                                     type="radio"
-                                    id="supplier-recent2"
-                                    name="supplier_language"
-                                    value="Recent2"
+                                    id="lowest"
+                                    name="sort_option"
+                                    value="lowest"
+                                    checked={selectedSortBy === "lowest"}
+                                    onChange={() => setSelectedSortBy("lowest")}
                                   />
                                 </div>
-                                <div className="filter-sort">
-                                  <label for="supplier-recent3">
-                                    Oldest to recent amount
-                                  </label>
+                                <div
+                                  className="filter-sort"
+                                  onClick={() => setSelectedSortBy("oldest")}
+                                >
+                                  <label htmlFor="oldest">Oldest to recent</label>
                                   <input
                                     type="radio"
-                                    id="supplier-recent3"
-                                    name="supplier_language"
-                                    value="Recent3"
+                                    id="oldest"
+                                    name="sort_option"
+                                    value="oldest"
+                                    checked={selectedSortBy === "oldest"}
+                                    onChange={() => setSelectedSortBy("oldest")}
                                   />
                                 </div>
-                                <div className="filter-sort">
-                                  <label for="supplier-recent4">
-                                    By name A-Z
-                                  </label>
+                                <div
+                                  className="filter-sort"
+                                  onClick={() => setSelectedSortBy("name")}
+                                >
+                                  <label htmlFor="name">By name A-Z</label>
                                   <input
                                     type="radio"
-                                    id="supplier-recent4"
-                                    name="supplier_language"
-                                    value="Recent4"
+                                    id="name"
+                                    name="sort_option"
+                                    value="name"
+                                    checked={selectedSortBy === "name"}
+                                    onChange={() => setSelectedSortBy("name")}
                                   />
                                 </div>
                                 <div>
-                                  <button className="btn-save mt-4">
+                                  <button
+                                    className="btn-save mt-4"
+                                    onClick={handleApplyFilters}
+                                    data-bs-dismiss="modal"
+                                  >
                                     View Result
                                   </button>
                                 </div>
@@ -887,22 +994,18 @@ function CustomerLedgerFlow() {
                         </div>
                       </div>
                     </div>
-                    <div>
-                      {fetchLedger?.results
-                        ?.filter((item) => item.type === "supplier")
+                    <div className="supplier-list" style={{ maxHeight: '600px', overflowY: 'auto' }}>
+                      {ledgerData
+                        .filter((item) => item.type === "supplier")
                         .map((item) => {
                           const isNegative = Number(item.balance) < 0;
                           const formattedBalance = Math.abs(Number(item.balance)).toLocaleString();
-
+                          const formattedTime = formatTimestamp(item.createdAt);
                           return (
                             <button
                               key={item.id}
                               className="ledge-user"
-                              onClick={() =>
-                                handleSupplierLedgeUserClick({
-                                  ledgerId: item.id,
-                                })
-                              }
+                              onClick={() => handleSupplierLedgeUserClick({ ledgerId: item.id })}
                             >
                               <div className="ledge-user-flex">
                                 <div className="ledge-user-details profile-letter">
@@ -910,18 +1013,16 @@ function CustomerLedgerFlow() {
                                 </div>
                                 <div className="ledge-user-details">
                                   <h3>{item.name}</h3>
-                                  <p>Just now</p>
+                                  <p>{formattedTime}</p>
                                 </div>
                               </div>
                               <div className="ledge-user-details">
-                                <h5
-                                  style={{
-                                    color: isNegative ? "red" : "green",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: "4px",
-                                  }}
-                                >
+                                <h5 style={{
+                                  color: isNegative ? "red" : "green",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "4px",
+                                }}>
                                   {isNegative ? <ArrowUp /> : <ArrowDown />}
                                   ₹ {formattedBalance}
                                 </h5>
@@ -929,6 +1030,8 @@ function CustomerLedgerFlow() {
                             </button>
                           );
                         })}
+                      {isLoading && <div>Loading more...</div>}
+                      {!hasMore && ledgerData.length > 0 && <div>No more suppliers to load</div>}
                     </div>
                   </>
                 </div>
@@ -1481,7 +1584,7 @@ function CustomerLedgerFlow() {
                 >
                   {selectedUser && (
                     <>
-                      <SupplierTransaction />
+                      <SupplierTransaction ledgerId={selectedUser.ledgerId} />
                     </>
                   )}
                 </div>
